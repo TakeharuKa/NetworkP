@@ -36,7 +36,7 @@ struct Request {
 
 	uint32_t packetCount;
 	uint32_t checkSum;
-}ERRORT, ERRORF, ERRORI, SUSSESS;
+};
 
 struct dataPacket {
 	char data[DATA_SIZE];
@@ -121,6 +121,36 @@ int Accept(int fd, struct sockaddr *sa, socklen_t *salenptr)
 	return n;
 }
 
+void so_reuseaddr (int s)
+{
+	//To avoid waiting longer than 2MSL
+	int optval = 1;
+
+	if((setsockopt(s, SOL_SOCKET,SO_REUSEADDR, &optval, sizeof(optval))) < 0)
+	{
+		cerr << "set soreuseaddr error" << endl;
+		exit(1);
+	}
+}
+void so_linger (int s)
+{
+	//To avoid FIN_WAIT attack
+	struct linger ling;
+
+	ling.l_onoff = 1;
+	ling.l_linger = 0;
+	if((setsockopt(s, SOL_SOCKET, SO_LINGER, &ling, sizeof(ling))) < 0)
+	{
+		cerr << "set solinger error" << endl;
+		exit(1);
+	}
+}
+
+void so_keepalive (int s)
+{
+
+}
+
 void sig_chld(int signo) {
 	int stat;
 	pid_t pid;
@@ -135,10 +165,8 @@ void sig_chld(int signo) {
 Sigfunc* Signal(int signo, Sigfunc *func) {
 	Sigfunc	*sigfunc;
 
-	if ((sigfunc = signal(signo, func)) == SIG_ERR) {
+	if ((sigfunc = signal(signo, func)) == SIG_ERR)
 		printf("signal error\n");
-		exit(1);
-	}
 	return(sigfunc);
 }
 
@@ -149,6 +177,18 @@ uint32_t calcCheckSum(char* data, int length)
 		ret += *(data + i);
 	}
 	return ret;
+}
+
+void checkCheckSum(char *data, int length, uint32_t checkSum, int fd) {
+	uint32_t realcheckSum = calcCheckSum(data, length);
+
+	cerr << "comp: " << checkSum << " " << realcheckSum << endl;
+	if(checkSum != realcheckSum) {
+		cerr << "Checksum invalid" << endl;
+
+		close(fd);
+		pthread_exit (NULL);
+	}
 }
 
 void *doit(void *_nowfd)
@@ -166,21 +206,26 @@ void *doit(void *_nowfd)
 
 	if ( (nread = readn(nowfd, (void *)&request, sizeof(request))) < 0) {
 		cerr << "Read request error" << endl;
-		Writen(nowfd, (void*) &ERRORI, sizeof(ERRORI));
 		close(nowfd);
 		pthread_exit (NULL);
 	}
 
+	cerr << "nread" << nread << endl;
+	for(int i = 0; i < sizeof(request); i ++) {
+		cerr << *(char *) (&request + i);
+	}
+	cerr << endl;
+
 	request.checkSum = ntohl(request.checkSum);
+
+	checkCheckSum((char *) &request, sizeof(request) - 4, request.checkSum, nowfd);
+
 	request.packetCount = ntohl(request.packetCount);
 
 	cerr << request.type << " " << request.version << " " << request.content << " " << " " << request.packetCount << " " << request.checkSum << endl;
 
-	if (request.checkSum != calcCheckSum((char *)&request, sizeof(request) - 4) ||
-			request.version != VERSION || (request.type != 'U' && request.type != 'D')) {
-
+	if (request.version != VERSION || (request.type != 'U' && request.type != 'D')) {
 		cerr << "Request invalid" << endl;
-		Writen(nowfd, (void*) &ERRORI, sizeof(ERRORI));
 		close(nowfd);
 		pthread_exit (NULL);
 	}
@@ -214,7 +259,15 @@ void *doit(void *_nowfd)
 			if( (access( pathbuf, 0 )) != -1 )
 			{
 				cerr << "File exists" << endl;
-				Writen(nowfd, (void*) &ERRORF, sizeof(ERRORF));
+
+				ret.version = VERSION;
+				ret.type = 'F';
+				bzero((void *)&ret.content, sizeof(ret.content));
+				ret.packetCount = 0;
+				ret.checkSum = calcCheckSum((char *)&ret, sizeof(ret) - 4);
+				ret.checkSum = htonl(ret.checkSum);
+
+				Writen(nowfd, (void*) &ret, sizeof(ret));
 
 				close(nowfd);
 				pthread_exit (NULL);
@@ -225,8 +278,6 @@ void *doit(void *_nowfd)
 			for (uint32_t i = 0; i < request.packetCount; i ++){
 				if ( readn(nowfd, (void *)&data, sizeof(data)) < 0) {
 					cerr << "Read data error" << endl;
-					Writen(nowfd, (void*) &ERRORI, sizeof(ERRORI));
-
 					fclose(fp);
 					close(nowfd);
 					pthread_exit (NULL);
@@ -234,23 +285,20 @@ void *doit(void *_nowfd)
 
 				data.order = ntohl(data.order);
 				data.checkSum = ntohl(data.checkSum);
-
-				if (data.checkSum != calcCheckSum((char *)&data, sizeof(data) - 4) ||
-						data.order != i) {
-
-					cerr << "Request invalid" << endl;
-					Writen(nowfd, (void*) &ERRORI, sizeof(ERRORI));
-
-					close(nowfd);
-					pthread_exit (NULL);
-				}
+				checkCheckSum((char*) &data, sizeof(data) - 4, data.checkSum, nowfd);
 
 				fwrite(data.data, sizeof(char), DATA_SIZE, fp);
 			}
 
 			cerr << "Received: " << filePath << " successfully." << endl;
 
-			Writen(nowfd, (void*) &SUSSESS, sizeof(SUSSESS));
+			ret.version = VERSION;
+			ret.type = 'S';
+			bzero((void *)&ret.content, sizeof(ret.content));
+			ret.packetCount = 0;
+			ret.checkSum = calcCheckSum((char *)&ret, sizeof(ret) - 4);
+
+			Writen(nowfd, (void*) &ret, sizeof(ret));
 
 			fclose(fp);
 			close(nowfd);
@@ -270,7 +318,15 @@ void *doit(void *_nowfd)
 			if( (access( pathbuf, 0 )) != 0 || access ( pathbuf, 4 ) != 0 )
 			{
 				cerr << "File not exist" << endl;
-				Writen(nowfd, (void*) &ERRORF, sizeof(ERRORF));
+
+				request.version = VERSION;
+				request.type = 'F';
+				bzero((void *)&request.content, sizeof(request.content));
+				request.packetCount = 0;
+				request.checkSum = calcCheckSum((char *)&request, sizeof(request) - 4);
+				request.checkSum = htonl(request.checkSum);
+
+				Writen(nowfd, (void*) &request, sizeof(request));
 
 				close(nowfd);
 				pthread_exit (NULL);
@@ -289,6 +345,8 @@ void *doit(void *_nowfd)
 			ret.packetCount = htonl(size_packet);
 			ret.checkSum = calcCheckSum((char *)&ret, sizeof(ret) - 4);
 
+			//cerr << "packetSize: " << size << " " << size_packet << endl;
+
 			Writen(nowfd, (void *) &ret, sizeof(ret));
 
 			for (uint32_t i = 0; i < size_packet; i ++){
@@ -298,6 +356,7 @@ void *doit(void *_nowfd)
 				data.order = ntohl(data.order);
 				data.checkSum = ntohl(calcCheckSum((char *)&data, sizeof(data) - 4));
 
+				//cerr << "data: " << data.data << endl;
 				Writen(nowfd, (void*) &data, sizeof(data));
 			}
 
@@ -305,14 +364,17 @@ void *doit(void *_nowfd)
 			cerr << "Send: " << filePath << " successfully." << endl;
 
 			bzero((void *)&request.content, sizeof(request.content));
+			if ( readn(nowfd, (void *)&request, sizeof(request)) < 0) {
+				cerr << "Read return error" << endl;
+				close(nowfd);
+				pthread_exit (NULL);
+			}
 
-			if ( readn(nowfd, (void *)&request, sizeof(request)) < 0 || 
-					ntohl(request.checkSum) != calcCheckSum((char *)&request, sizeof(request) - 4) ||
-					request.version != VERSION || (request.type != 'S')) {
+			request.checkSum = ntohl(request.checkSum);
+			checkCheckSum((char *) &request, sizeof(request) - 4, request.checkSum, nowfd);
 
+			if (request.version != VERSION || (request.type != 'S')) {
 				cerr << "Send Failed." << endl;
-				Writen(nowfd, (void*) &ERRORI, sizeof(ERRORI));
-
 				close(nowfd);
 				pthread_exit (NULL);
 			}
@@ -325,17 +387,6 @@ void *doit(void *_nowfd)
 
 int main()
 {
-	ERRORT.version = ERRORI.version = ERRORF.version = SUSSESS.version = VERSION;
-	ERRORT.type = 'T';
-	ERRORI.type = 'I';
-	ERRORF.type = 'F';
-	SUSSESS.type = 'S';
-
-	ERRORT.checkSum = htonl(calcCheckSum((char *)&ERRORT, sizeof(ERRORT) - 4));
-	ERRORI.checkSum = htonl(calcCheckSum((char *)&ERRORI, sizeof(ERRORI) - 4));
-	ERRORF.checkSum = htonl(calcCheckSum((char *)&ERRORF, sizeof(ERRORF) - 4));
-	SUSSESS.checkSum = htonl(calcCheckSum((char *)&SUSSESS, sizeof(SUSSESS) - 4));
-
 	struct sockaddr_in cliaddr, servaddr;
 
 	socklen_t clilen;
@@ -347,22 +398,8 @@ int main()
 		return -1;
 	}
 
-	//To avoid FIN_WAIT attack and avoid waiting longer than 2MSL
-	//linger: FIN_WAIT
-	//reuseaddr: waiting
-
-	struct linger ling;
-	ling.l_onoff = 1;
-	ling.l_linger = 0;
-	int optval1 = 1;
-	int optval2 = 1;
-	if((setsockopt(listenfd, SOL_SOCKET, SO_LINGER, &ling, sizeof(ling))) < 0 ||
-			setsockopt(listenfd, SOL_SOCKET,SO_REUSEADDR, &optval1, sizeof(optval1)) < 0 ||
-			setsockopt(listenfd, SOL_SOCKET, SO_KEEPALIVE, &optval2, sizeof(optval2)) < 0)
-	{
-		cerr << "socket setting error" << endl;
-		return -1;
-	}
+	so_reuseaddr(listenfd);
+	so_linger(listenfd);
 
 	servaddr.sin_family = AF_INET;
 	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -388,28 +425,42 @@ int main()
 		}
 
 		//disable nagle algorithm & enable keepalive
+
 		struct timeval timeout1 = {0, 100000};
-		struct timeval timeout2 = {0, 100000};
+
 		int optval = 1;
 		if(setsockopt(connfd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval)) < 0 || 
-				setsockopt(connfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout1, sizeof(timeout1)) < 0 ||
-				setsockopt(connfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout1, sizeof(timeout1)) < 0)
-		{
-			Writen(connfd, (void*) &ERRORT, sizeof(ERRORT));
+				setsockopt(connfd, SOL_SOCKET, SO_KEEPALIVE, &optval, sizeof(optval)) < 0 || 
+				setsockopt(connfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout1, sizeof(timeout1)) < 0)
+			{
+				ret.version = VERSION;
+				ret.type = 'T';
+				bzero((void *)&ret.content, sizeof(ret.content));
+				ret.packetCount = 0;
+				ret.checkSum = calcCheckSum((char *)&ret, sizeof(ret) - 4);
+				ret.checkSum = htonl(ret.checkSum);
 
-			close(connfd);
-			cerr << "socket setting error.";
-			continue;
-		}
+				Writen(connfd, (void*) &ret, sizeof(ret));
 
-		int pp = pthread_create(&tid, NULL, doit, &connfd);
+				close(connfd);
+				cerr << "socket setting error.";
+			}
 
-		if (pp != 0) {
-			Writen(connfd, (void*) &ERRORT, sizeof(ERRORT));
+			int pp = pthread_create(&tid, NULL, doit, &connfd);
 
-			close(connfd);
-			perror("Thread create failed.");
-			continue;
+			if (pp != 0) {
+				ret.version = VERSION;
+				ret.type = 'T';
+				bzero((void *)&ret.content, sizeof(ret.content));
+				ret.packetCount = 0;
+				ret.checkSum = calcCheckSum((char *)&ret, sizeof(ret) - 4);
+				ret.checkSum = htonl(ret.checkSum);
+
+				Writen(connfd, (void*) &ret, sizeof(ret));
+
+				close(connfd);
+				perror("Thread create failed.");
+				continue;
+			}
 		}
 	}
-}

@@ -287,45 +287,67 @@ int main(int argc, char *argv[])
 		exit(1); 
 	} 
 
-	chat.type = 'U';
+	chat.type = 'D';
 	chat.version = 'd';
-	chat.packetCount = 3;
+	chat.packetCount = 0;
 	chat.packetCount = htonl(chat.packetCount);
 
 	//chat.packetCount = htonl(3);
 
-	strcpy(chat.filename, "fuck.txt");
+	strcpy(chat.filename, "todownload.txt");
 
 	chat.checkSum = calcCheckSum((char*)&chat, sizeof(chat) - 4);
 
 	cerr <<"checksum:"<< chat.checkSum << endl;
 
 	chat.checkSum = htonl(chat.checkSum);
-	//chat.packetCount = htonl(chat.checkSum);
 
 	write(clientSocket, (void *)&chat, sizeof(chat));
 
-	string filename = "fuck.txt";
-	sendFile(clientSocket, filename);
+	string filename = "todownload.txt";
 
-	/*
-	unsigned int length = sizeof(struct sockaddr_in);
-	sockaddr_in serverAddrr;
 
-	cerr << "Waiting for connection..." << endl; 
-	int serverDataSocket = accept(clientDataSocket, (struct sockaddr *) &serverAddrr, &length);
+	readn(clientSocket, (void *)&chat, sizeof(chat));
+	chat.packetCount = ntohl(chat.packetCount);
 
-	if (serverDataSocket < 0) {
-		fprintf(stderr,"Connect Error:%s\a\n",strerror(errno)); 
-		exit(1); 
-	} 
-	*/
+	dataPacket pack;
+	char pathbuf[100] = "./todownload.txt";
 
-	//cerr << "Connected sock No." << serverDataSocket << endl;
-	//sendFile(serverDataSocket, sbuffer);
+	FILE *fp = fopen(pathbuf, "ab");
 
-	/* 结束通讯 */ 
+	for (uint32_t i = 0; i < chat.packetCount; i ++){
+		if ( readn(clientSocket, (void *)&pack, sizeof(pack)) < 0) {
+			cerr << "Read data error" << endl;
+			fclose(fp);
+			close(clientSocket);
+			pthread_exit (NULL);
+		}
+
+		pack.order = ntohl(pack.order);
+		//data.checkSum = ntohl(pack.checkSum);
+		//checkCheckSum((char*) &data, sizeof(data) - 4, data.checkSum, nowfd);
+
+
+		fwrite(pack.data, sizeof(char), 1000, fp);
+	}
+
+	fclose(fp);
+
+	cerr << "Received: " << pathbuf << " successfully." << endl;
+
+	chat.type = 'S';
+	chat.version = 'd';
+	chat.packetCount = 0;
+	chat.packetCount = htonl(chat.packetCount);
+
+	chat.checkSum = calcCheckSum((char*)&chat, sizeof(chat) - 4);
+
+	chat.checkSum = htonl(chat.checkSum);
+
+	write(clientSocket, (void *)&chat, sizeof(chat));
+
 	close(clientSocket); 
 	return 0;
 } 
+
 
