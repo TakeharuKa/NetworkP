@@ -160,12 +160,16 @@ void *doit(void *_nowfd)
 	int nowfd = *((int *)_nowfd);
 
 	struct Request request;
-	cerr << sizeof(request) << endl;
 
 	int nread;
 
-	if ( (nread = readn(nowfd, (void *)&request, sizeof(request))) < 0) {
-		cerr << "Read request error" << endl;
+
+	if ( (nread = readn(nowfd, (void *)&request, sizeof(request))) <= 0 || 
+			ntohl(request.checkSum) != calcCheckSum((char *)&request, sizeof(request) - 4) ||
+			request.version != VERSION || (request.type != 'U' && request.type != 'D')) {
+
+		cerr << request.type << " " << request.version << " " << request.content << " " << " " << request.packetCount << " " << request.checkSum << endl;
+		cerr << "Request invalid" << endl;
 		Writen(nowfd, (void*) &ERRORI, sizeof(ERRORI));
 		close(nowfd);
 		pthread_exit (NULL);
@@ -175,15 +179,6 @@ void *doit(void *_nowfd)
 	request.packetCount = ntohl(request.packetCount);
 
 	cerr << request.type << " " << request.version << " " << request.content << " " << " " << request.packetCount << " " << request.checkSum << endl;
-
-	if (request.checkSum != calcCheckSum((char *)&request, sizeof(request) - 4) ||
-			request.version != VERSION || (request.type != 'U' && request.type != 'D')) {
-
-		cerr << "Request invalid" << endl;
-		Writen(nowfd, (void*) &ERRORI, sizeof(ERRORI));
-		close(nowfd);
-		pthread_exit (NULL);
-	}
 
 	char pathbuf[100];
 	char dir[10] = "/files/";
@@ -223,7 +218,8 @@ void *doit(void *_nowfd)
 			fp = fopen(pathbuf, "ab");
 
 			for (uint32_t i = 0; i < request.packetCount; i ++){
-				if ( readn(nowfd, (void *)&data, sizeof(data)) < 0) {
+				bzero((void *)&data.data, sizeof(data.data));
+				if ( readn(nowfd, (void *)&data, sizeof(data)) <= 0) {
 					cerr << "Read data error" << endl;
 					Writen(nowfd, (void*) &ERRORI, sizeof(ERRORI));
 
@@ -306,7 +302,7 @@ void *doit(void *_nowfd)
 
 			bzero((void *)&request.content, sizeof(request.content));
 
-			if ( readn(nowfd, (void *)&request, sizeof(request)) < 0 || 
+			if ( readn(nowfd, (void *)&request, sizeof(request)) <= 0 || 
 					ntohl(request.checkSum) != calcCheckSum((char *)&request, sizeof(request) - 4) ||
 					request.version != VERSION || (request.type != 'S')) {
 

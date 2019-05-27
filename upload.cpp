@@ -290,7 +290,7 @@ int main(int argc, char *argv[])
 
 	//chat.packetCount = htonl(3);
 
-	strcpy(chat.filename, "toupload.txt");
+	strcpy(chat.filename, "result.png");
 
 	chat.checkSum = calcCheckSum((char*)&chat, sizeof(chat) - 4);
 
@@ -301,7 +301,7 @@ int main(int argc, char *argv[])
 	write(clientSocket, (void *)&chat, sizeof(chat));
 
 
-	string filename = "toupload.txt";
+	string filename = "result.png";
 	sendFile(clientSocket, filename);
 
 	/*

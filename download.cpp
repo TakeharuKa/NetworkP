@@ -294,7 +294,7 @@ int main(int argc, char *argv[])
 
 	//chat.packetCount = htonl(3);
 
-	strcpy(chat.filename, "todownload.txt");
+	strcpy(chat.filename, "result.png");
 
 	chat.checkSum = calcCheckSum((char*)&chat, sizeof(chat) - 4);
 
@@ -304,14 +304,14 @@ int main(int argc, char *argv[])
 
 	write(clientSocket, (void *)&chat, sizeof(chat));
 
-	string filename = "todownload.txt";
+	string filename = "result.png";
 
 
 	readn(clientSocket, (void *)&chat, sizeof(chat));
 	chat.packetCount = ntohl(chat.packetCount);
 
 	dataPacket pack;
-	char pathbuf[100] = "./todownload.txt";
+	char pathbuf[100] = "./result.png";
 
 	FILE *fp = fopen(pathbuf, "ab");
 
