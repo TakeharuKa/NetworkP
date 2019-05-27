@@ -326,6 +326,42 @@ void *doit(void *_nowfd)
 
 			fclose(fp);
 			close(nowfd);
+
+		case 'D':
+
+			cerr << "Uploading File" << endl;
+			char pathbuf[100];
+
+			string filePath = string(getcwd(pathbuf, sizeof(pathbuf))) + "/" + request.content + "0";
+			FILE *fp = fopen(filePath.c_str(), "ab");
+
+			struct dataPacket data;
+			for (uint32_t i = 0; i < request.packetCount; i ++){
+				//bzero((void *)&data, sizeof(data));
+				int nread = Readn(nowfd, (void *) &data, sizeof(data));
+				//cerr << "checksum: " << data.checkSum << endl;
+
+				data.order = ntohl(data.order);
+				data.checkSum = ntohl(data.checkSum);
+				checkCheckSum((char*) &data, sizeof(data) - 4, data.checkSum, nowfd);
+
+				cerr << "data: " << data.data << endl;
+				fwrite(data.data, sizeof(char), 1000, fp);
+			}
+
+			cerr << "Uploaded: " << filePath << " successfully." << endl;
+
+			Request ret;
+			ret.version = VERSION;
+			ret.type = 'S';
+			bzero((void *)&ret.content, sizeof(ret.content));
+			ret.packetCount = 0;
+			ret.checkSum = calcCheckSum((char *)&ret, sizeof(ret) - 4);
+
+			Writen(nowfd, (void*) &ret, sizeof(ret));
+
+			fclose(fp);
+			close(nowfd);
 	}
 }
 
